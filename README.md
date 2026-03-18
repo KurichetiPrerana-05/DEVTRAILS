@@ -304,4 +304,4 @@ GigShield **ONLY** covers **income loss** caused by **external disruption events
 
 ---
 
-*Submitted for Guidewire DEVTrails 2026 | Phase 1 Deadline: March 20, End of Day*
+*Submitted for Guidewire DEVTrails 2026 *
