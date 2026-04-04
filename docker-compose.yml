@@ -1,0 +1,114 @@
+# docker-compose.yml — GigShield Unified Monorepo
+# ─────────────────────────────────────────────────────────────────────────────
+# This file orchestrates all 6 services from local subdirectories.
+# Run: docker-compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: gigshield-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-gigshield}
+      POSTGRES_USER:     ${POSTGRES_USER:-gigshield_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gigshield_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/seed.sql:/docker-entrypoint-initdb.d/seed.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gigshield_user} -d ${POSTGRES_DB:-gigshield}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis Cache ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: gigshield-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Backend API (Node.js / Express) ──────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gigshield-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV:         ${NODE_ENV:-development}
+      PORT:             3001
+      DATABASE_URL:     postgres://${POSTGRES_USER:-gigshield_user}:${POSTGRES_PASSWORD:-gigshield_pass}@postgres:5432/${POSTGRES_DB:-gigshield}
+      DB_HOST:          postgres
+      DB_PORT:          5432
+      DB_NAME:          ${POSTGRES_DB:-gigshield}
+      DB_USER:          ${POSTGRES_USER:-gigshield_user}
+      DB_PASS:          ${POSTGRES_PASSWORD:-gigshield_pass}
+      REDIS_URL:        ${REDIS_URL:-redis://redis:6379}
+      ML_SERVICE_URL:   http://ml-service:8000
+      JWT_SECRET:       ${JWT_SECRET:-gigshield_jwt_secret_dev}
+      ADMIN_SECRET:     ${ADMIN_SECRET:-gigshield_admin_secret_dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── ML Service (FastAPI) ─────────────────────────────────────────────────────
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: gigshield-ml
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+  # ── Worker PWA (React) ───────────────────────────────────────────────────────
+  frontend-worker:
+    build:
+      context: ./frontend-worker
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3001/api
+    container_name: gigshield-worker-app
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  # ── Admin Dashboard (React) ──────────────────────────────────────────────────
+  frontend-admin:
+    build:
+      context: ./frontend-admin
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:3001
+        VITE_ADMIN_TOKEN: ${ADMIN_SECRET:-gigshield_admin_secret_dev}
+    container_name: gigshield-admin
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

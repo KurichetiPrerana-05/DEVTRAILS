@@ -1,0 +1,15 @@
+**/node_modules
+**/venv
+**/__pycache__
+**/.git
+**/dist
+**/.next
+**/.env
+**/.env.local
+**/package-lock.json
+*.log
+gigshield-prototype
+p1
+member2_module
+member4_module
+P3
