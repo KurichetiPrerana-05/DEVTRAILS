@@ -60,7 +60,7 @@ def health():
 @app.post("/score-risk")
 def risk_endpoint(req: RiskRequest):
     try:
-        from risk_model.predictor import score_risk
+        from models.risk_model.predictor import score_risk
         return score_risk(
             pincode=req.pincode,
             season=req.season,
@@ -81,7 +81,7 @@ def risk_endpoint(req: RiskRequest):
 @app.post("/score-fraud")
 def fraud_endpoint(req: FraudRequest):
     try:
-        from fraud_detection.predictor import score_fraud
+        from models.fraud_detection.predictor import score_fraud
         return score_fraud(
             pincode=req.pincode,
             trigger_type=req.trigger_type,
