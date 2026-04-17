@@ -33,15 +33,27 @@ export default function Dashboard() {
   }, [])
 
   const handleFileClaim = async () => {
+    // Guard: require authenticated worker — never fall back to a seeded demo ID
+    if (!worker?.worker_id) {
+      alert('Please log in to file a claim.')
+      navigate('/login')
+      return
+    }
+
     setIsFiling(true)
     try {
-      // Get current location (prototype: fallback to seed coords if denied)
-      const pos = await new Promise((res) => {
-        navigator.geolocation.getCurrentPosition(res, () => res({ coords: { latitude: 12.93, longitude: 77.62 } }))
-      })
-      
+      // Get current location — user must grant permission; no silent coord substitution
+      let pos
+      try {
+        pos = await new Promise((res, rej) => {
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 })
+        })
+      } catch (_) {
+        throw new Error('Location access is required to file a claim. Please enable GPS and try again.')
+      }
+
       const res = await workerAPI.createClaim({
-        user_id: worker?.worker_id || 'a0000001-0000-0000-0000-000000000001', // Ravi Kumar
+        user_id: worker.worker_id,
         lat: pos.coords.latitude,
         lon: pos.coords.longitude
       })

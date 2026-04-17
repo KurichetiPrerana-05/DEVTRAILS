@@ -1,5 +1,7 @@
 import joblib
 import numpy as np
+import requests
+import os
 
 _model = joblib.load('models/fraud_model.pkl')
 
@@ -17,17 +19,96 @@ TIER_ACTIONS = {
     'auto_rejected':  'Claim denied — appeal available',
 }
 
-# ── Mock weather cross-check ──────────────────────────────────
-# In production: call OpenWeatherMap historical API here.
-# For prototype: hardcoded active disruptions per pincode + type.
-ACTIVE_DISRUPTIONS = {
+# ── Pincode → approximate lat/lon mapping ─────────────────────
+# For production: replace with a full pincode geocoding DB or API.
+PINCODE_COORDS = {
+    '560001': (12.9716, 77.5946),  # Bangalore
+    '110001': (28.6139, 77.2090),  # Delhi
+    '400001': (18.9388, 72.8354),  # Mumbai
+    '700001': (22.5726, 88.3639),  # Kolkata
+    '500001': (17.3850, 78.4867),  # Hyderabad
+    '600001': (13.0827, 80.2707),  # Chennai
+    '411001': (18.5204, 73.8567),  # Pune
+    '302001': (26.9124, 75.7873),  # Jaipur
+    '380001': (23.0225, 72.5714),  # Ahmedabad
+    '226001': (26.8467, 80.9462),  # Lucknow
+}
+
+# Fallback hardcoded set used only when Open-Meteo is unavailable
+_FALLBACK_DISRUPTIONS = {
     ('560001', 'rain'), ('110001', 'aqi'),
     ('400001', 'rain'), ('700001', 'aqi'),
     ('500001', 'heat'),
 }
 
+def _verify_disruption_via_openmeteo(pincode: str, trigger_type: str) -> bool:
+    """
+    Calls Open-Meteo current weather API to verify a real disruption
+    exists at the claimed pincode.
+    
+    Thresholds:
+      rain  → precipitation > 5 mm in last hour
+      aqi   → pm10 > 150 µg/m³  (Open-Meteo Air Quality API)
+      heat  → temperature > 40°C
+    """
+    coords = PINCODE_COORDS.get(pincode)
+    if not coords:
+        # Unknown pincode: cannot verify → treat as unverified
+        return False
+
+    lat, lon = coords
+    timeout = int(os.environ.get('WEATHER_API_TIMEOUT', '5'))
+
+    try:
+        if trigger_type in ('rain',):
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&current=precipitation"
+                f"&timezone=auto"
+            )
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            precip = r.json()['current'].get('precipitation', 0)
+            return precip > 5.0  # mm
+
+        elif trigger_type in ('aqi',):
+            url = (
+                f"https://air-quality-api.open-meteo.com/v1/air-quality"
+                f"?latitude={lat}&longitude={lon}"
+                f"&current=pm10"
+                f"&timezone=auto"
+            )
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            pm10 = r.json()['current'].get('pm10', 0)
+            return pm10 > 150  # µg/m³
+
+        elif trigger_type in ('heat',):
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&current=temperature_2m"
+                f"&timezone=auto"
+            )
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            temp = r.json()['current'].get('temperature_2m', 0)
+            return temp > 40.0  # °C
+
+        else:
+            # Unknown trigger type → cannot verify
+            return False
+
+    except Exception as e:
+        print(f"[Weather API] Open-Meteo call failed for {pincode}/{trigger_type}: {e}")
+        # Graceful fallback to hardcoded set rather than hard-blocking all claims
+        return (pincode, trigger_type) in _FALLBACK_DISRUPTIONS
+
+
 def _verify_disruption_was_real(pincode: str, trigger_type: str) -> bool:
-    return (pincode, trigger_type) in ACTIVE_DISRUPTIONS
+    return _verify_disruption_via_openmeteo(pincode, trigger_type)
+
 
 # ── Main fraud scorer ─────────────────────────────────────────
 def score_fraud(
@@ -47,7 +128,6 @@ def score_fraud(
 ) -> dict:
 
     # ── Fix 1: Hard block — shift verification ────────────────
-    # Spec: "no submission happens if worker is Offline"
     if platform_online_status == 0:
         return {
             'fraud_score': 1.0,
@@ -57,9 +137,8 @@ def score_fraud(
             'block_reason': ['shift_verification_failed'],
         }
 
-    # ── Fix 3: Claim window validation ───────────────────────
-    # Spec: "claim filed outside disruption window" is a timing anomaly
-    DISRUPTION_WINDOW_SECONDS = 6 * 3600   # must claim within 6 hours of trigger
+    # ── Claim window validation ───────────────────────────────
+    DISRUPTION_WINDOW_SECONDS = 6 * 3600
     time_since_trigger = claim_submitted_epoch - disruption_start_epoch
 
     if time_since_trigger < 0 or time_since_trigger > DISRUPTION_WINDOW_SECONDS:
@@ -71,8 +150,7 @@ def score_fraud(
             'block_reason': ['outside_disruption_window'],
         }
 
-    # ── Fix 5: Weather cross-check ────────────────────────────
-    # Spec: "verify disruption claim against actual API data"
+    # ── Real weather cross-check via Open-Meteo ───────────────
     weather_verified = _verify_disruption_was_real(pincode, trigger_type)
     if not weather_verified:
         return {
@@ -83,8 +161,7 @@ def score_fraud(
             'block_reason': ['weather_cross_check_failed'],
         }
 
-    # ── Fix 2: Rule-based hard filters ───────────────────────
-    # Spec: "hard filters for GPS spoofing and duplicate prevention"
+    # ── Rule-based hard filters ───────────────────────────────
     hard_block_reasons = []
 
     if location_jump_velocity > 100:
@@ -106,7 +183,6 @@ def score_fraud(
         }
 
     # ── Isolation Forest (ML layer) ───────────────────────────
-    # Runs only if all hard filters pass
     features = [[
         gps_accuracy_radius,
         location_jump_velocity,

@@ -109,7 +109,19 @@ export const PLANS = [
   },
 ]
 
-// Generate mock disruption calendar for current month
+// ── Seeded PRNG ───────────────────────────────────────────────
+// Produces a deterministic pseudo-random number from a seed so the
+// disruption calendar is stable for a given year+month combination.
+// This prevents the "different risk levels on every render" bug.
+function seededRandom(seed) {
+  // Mulberry32 — fast, decent distribution, pure JS
+  let t = seed + 0x6D2B79F5;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+// Generate mock disruption calendar that is stable per (year, month, day)
 export function generateMockCalendar(year, month) {
   const daysInMonth = new Date(year, month, 0).getDate()
   const calendar = []
@@ -117,7 +129,10 @@ export function generateMockCalendar(year, month) {
   const weights   = [0.15, 0.20, 0.10, 0.55]
 
   for (let d = 1; d <= daysInMonth; d++) {
-    const rand = Math.random()
+    // Seed based on year + month + day so output is reproducible
+    const seed = year * 10000 + month * 100 + d
+    const rand = seededRandom(seed)
+
     let cumulative = 0
     let risk = 'normal'
     for (let i = 0; i < riskLevels.length; i++) {
