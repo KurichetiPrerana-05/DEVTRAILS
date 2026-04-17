@@ -129,5 +129,9 @@ GigShield implements a sovereign security layer to protect insurance reserves:
 -   **Temporal Shield**: Prevents rapid-fire claim spam (30-min cooldown).
 -   **Geo-Fencing**: Validates claims against hyper-local weather telemetry and verified GPS data.
 -   **ML Thresholds**: Automatically flags any claim with a risk score above 0.8 for manual human audit.
+## 🎤 Pitch Deck
 
+🚀 Explore the vision, architecture, and impact of **GigShield**:
+
+🔗 **Live Deck**: [Click here to view](https://1drv.ms/p/c/2de6e89f1affa0db/IQCB2OBmWrBUSpzmF_CsjQKBAfp9hKyeRRGHIlU6hReBMWg?e=xQJh6x)
 ---
